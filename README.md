@@ -6,8 +6,10 @@
 
 ## 리덕스의 핵심 이론 3가지
 
-1. 전체 앱의 상태는 오직 하나의 객체로 관리한다.
+1. 전체 앱의 상태는 오직 하나의 객체로 관리한다. Single source of truth
 2. 상태 변화는 Action 을 통해서만 변경 가능하고 Store 자체는 읽기 전용으로 직접 수정하지 않는다.
+    1. Action 은 무슨 일이 일어났는지를 의미하는 하나의 `plain object` 이다. 오직 이 Action 객체들을 통해서만 상태의 변화를 나타냄으로써 얻게 되는 이득은 다음과 같다.
+    2. It also enables very powerful developer tools, because it is possible to trace every mutation to the action that caused it. You can record user sessions and reproduce them just by replaying every action. - 리덕스 튜토리얼 중
 3. 상태를 변화시키는 주체로써 이전의 상태와 디스패치된 액션만을 토대로 새로운 상태를 만들어내는 리듀서라는 함수를 필요로 한다. 리듀서는 순수함수여야 한다.
     1. 이전 상태로써 전달된 state 매개변수가 undefined 일 때는 상태 객체의 초기값을 반환하는 convention이 있다.
     2. 정해진 action.type 이 아닌 경우 현재의 상태를 반환한다.
@@ -25,6 +27,10 @@
 
 리액트 돔을 이용해 렌더링을 할 시
 객체 형태의 상태를 얕은 비교만으로 변경여부를 감지하고 업데이트 여부를 결정할 수 있기 때문.
+
+또한, 전달된 인자에만 의존해 출력이 결정되고, 동일한 인자에 같은 결과를 나타낸다면,
+테스트에 유리하고 메모이제이션과 같은 성능 최적화 기법을 이용할 수 있으며,
+외부의 상태에 의존하지 않기 때문에 병렬화된 무언가를 하기 용이하기 때문이다.
 
 상태값이 아래와 같이 원시 타입의 형태일 경우 자동으로 불변성이 지켜지지만,
 객체 타입의 경우 새로운 객체를 생성하는 방법을 따로 고안해야한다.
@@ -65,7 +71,7 @@ const counter = (state = 0 /* 이전 상태값이 존재하지 않을 때 */, ac
 ```jsx
 const createStore = (reducer) => {
 	let state;
-	const listeners = [];
+	let listeners = [];
 
 	const getState = () => state;
 
@@ -199,6 +205,54 @@ const todosReducer = (state = [], action) => {
 }
 ```
 
+## 리듀서 조합(Reducer Composition)
+
+- In a typical Redux app, there is just a single store with a single root reducing function. As your app grows, you split the root reducer into smaller reducers independently operating on the different parts of the state tree. This is exactly like how there is just one root component in a React app, but it is composed out of many small components.
+
+```jsx
+const addTodo = (todos, todo) => [...todos, todo];
+const removeTodo = (todos, id) => todos.filter((todo) => todo.id !== id);
+
+// 업데이트 부분은 고차함수 형태로 각색해봤다.
+const updateTodo = (cb, key) => (todos, index, value) =>
+  todos.map((todo) =>
+    todo.id === index ? { ...todo, ...{ [key]: cb(value ?? todo[key]) } } : todo
+  );
+const updateTodoText = updateTodo((v) => v, "text");
+const toggleTodo = updateTodo((v) => (v != null ? !v : false), "completed");
+
+const todosReducer = (state = [], action) => {
+  switch (action.type) {
+    case "ADD_TODO":
+      return addTodo(state, action.todo);
+    case "REMOVE_TODO":
+      return removeTodo(state, action.id);
+    case "TOGGLE_TODO":
+      return toggleTodo(state, action.id);
+    case "UPDATE_TODO_TEXT":
+      return updateTodoText(state, action.id, action.value);
+    default:
+      return state;
+  }
+};
+
+const visibilityReducer = (state = "SHOW_ALL", action) => {
+  switch (action.type) {
+    case "SET_VISIBILITY_FILTER":
+      return action.filter;
+    default:
+      return state;
+  }
+};
+
+const todoAppReducer = (state = {}, action) => { // 각각의 부분적인 상태를 처리하는 리듀서들을 조합해 전체 상태를 처리하는 리듀서를 만든다.
+  return {
+    todos: todosReducer(state.todos, action),
+    visibility: visibilityReducer(state.visibility, action),
+  };
+};
+```
+
 ## Todolist 종합 구현 예시
 
 ```jsx
@@ -206,8 +260,8 @@ const todosReducer = (state = [], action) => {
     스토어 구현
 */
 const createStore = (reducer) => {
-  let state = [];
-  const listeners = [];
+  let state;
+  let listeners = [];
 
   const getState = () => state;
 
@@ -231,8 +285,8 @@ const createStore = (reducer) => {
 };
 
 /*
-    리듀서 구현
-*/
+      리듀서 구현
+  */
 
 const addTodo = (todos, todo) => [...todos, todo];
 const removeTodo = (todos, id) => todos.filter((todo) => todo.id !== id);
@@ -243,7 +297,7 @@ const updateTodo = (cb, key) => (todos, index, value) =>
     todo.id === index ? { ...todo, ...{ [key]: cb(value ?? todo[key]) } } : todo
   );
 const updateTodoText = updateTodo((v) => v, "text");
-const toggleTodo = updateTodo((v) => v != null ? !v : false, "completed");
+const toggleTodo = updateTodo((v) => (v != null ? !v : false), "completed");
 
 const todosReducer = (state = [], action) => {
   switch (action.type) {
@@ -260,15 +314,32 @@ const todosReducer = (state = [], action) => {
   }
 };
 
+const visibilityReducer = (state = "SHOW_ALL", action) => {
+  switch (action.type) {
+    case "SET_VISIBILITY_FILTER":
+      return action.filter;
+    default:
+      return state;
+  }
+};
+
+const todoAppReducer = (state = {}, action) => {
+  return {
+    todos: todosReducer(state.todos, action),
+    visibility: visibilityReducer(state.visibility, action),
+  };
+};
+
 /*
-    액션 크리에이터들
-*/
+      액션 크리에이터들
+  */
 
 const ACTION_TYPES = {
   ADD_TODO: "ADD_TODO",
   REMOVE_TODO: "REMOVE_TODO",
   TOGGLE_TODO: "TOGGLE_TODO",
   UPDATE_TODO_TEXT: "UPDATE_TODO_TEXT",
+  SET_VISIBILITY_FILTER: "SET_VISIBILITY_FILTER",
 };
 
 const actionAddTodo = (todo) => ({ type: ACTION_TYPES.ADD_TODO, todo });
@@ -279,12 +350,16 @@ const actionUpdateTodo = (id, value) => ({
   id,
   value,
 });
+const actionSetVisibility = (filter) => ({
+  type: ACTION_TYPES.SET_VISIBILITY_FILTER,
+  filter,
+});
 
 /* 
-    가상의 애플리케이션 코드
-*/
+      가상의 애플리케이션 코드
+  */
 
-const store = createStore(todosReducer);
+const store = createStore(todoAppReducer);
 
 store.subscribe(() => {
   console.log(">>>", store.getState()); // action이 dispatch 되면 현재 상태를 콘솔에 출력
@@ -309,4 +384,44 @@ store.dispatch(
 store.dispatch(actionToggleTodo(233));
 
 store.dispatch(actionUpdateTodo(453, "Long time no see"));
+
+store.dispatch(actionSetVisibility("SHOW_DONE"));
+```
+
+## combineReducers
+
+상기된 리듀서 조합과 거의 같은 일을 한다.
+
+`combineReducers` 함수에는 각 리듀서가 감당할 상태 트리의 `필드 이름`과 해당 상태를 관리할 `리듀서`를 객체 리터럴 형태로 전달 받는다.
+
+만약, 각 리듀서의 이름과 필드 이름이 동일하다면 아래처럼 `단축 표기법`을 사용해도 된다.
+
+```jsx
+import { combineReducers } from Redux;
+
+const todoReducer = combineReducers({ todos, visibility });
+```
+
+## combineReducers 구현해보기
+
+```jsx
+const combineReducers = (reducers) => {
+  return (state = {}, action) => {
+    const newState = {};
+
+    for (const stateKey in reducers) {
+      const reducer = reducers[stateKey];
+      const prevState = state[stateKey];
+
+      newState[stateKey] = reducer(prevState, action);
+    }
+
+    return newState;
+  };
+};
+
+const todoAppReducer = combineReducers({
+  todos: todosReducer,
+  visibility: visibilityReducer,
+});
 ```
